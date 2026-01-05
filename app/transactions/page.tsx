@@ -10,8 +10,17 @@ import { TransactionFilters } from "@/components/transactions/transaction-filter
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: { type?: string; category?: string; year?: string; month?: string; day?: string }
+  searchParams: Promise<{ 
+    type?: string
+    category?: string
+    year?: string
+    month?: string
+    day?: string
+    search?: string
+    page?: string
+  }>
 }) {
+  const params = await searchParams
   const supabase = await createClient()
 
   const {
@@ -22,57 +31,61 @@ export default async function TransactionsPage({
     redirect("/auth/login")
   }
 
-  // Build query
+  const page = Number.parseInt(params.page || "1")
+  const pageSize = 50
+  const offset = (page - 1) * pageSize
+
   let query = supabase
     .from("transactions")
-    .select("*, category:categories(*)")
+    .select("*, category:categories(*)", { count: "exact" })
     .eq("user_id", user.id)
     .order("date", { ascending: false })
+    .range(offset, offset + pageSize - 1)
 
-  // Aplicar filtros de data
-  if (searchParams.year) {
-    const year = searchParams.year
-    if (searchParams.month) {
-      const month = searchParams.month
-      if (searchParams.day) {
-        // Filtrar por dia específico
-        const date = `${year}-${month}-${searchParams.day}`
+  if (params.search) {
+    query = query.or(`title.ilike.%${params.search}%,description.ilike.%${params.search}%`)
+  }
+
+  if (params.year) {
+    const year = params.year
+    if (params.month) {
+      const month = params.month
+      if (params.day) {
+        const date = `${year}-${month}-${params.day}`
         query = query.eq("date", date)
       } else {
-        // Filtrar por mês específico
         const startDate = `${year}-${month}-01`
         const lastDay = new Date(Number(year), Number(month), 0).getDate()
         const endDate = `${year}-${month}-${lastDay.toString().padStart(2, "0")}`
         query = query.gte("date", startDate).lte("date", endDate)
       }
     } else {
-      // Filtrar por ano específico
       const startDate = `${year}-01-01`
       const endDate = `${year}-12-31`
       query = query.gte("date", startDate).lte("date", endDate)
     }
-  } else if (searchParams.month) {
-    // Se apenas o mês foi selecionado, usar ano atual
+  } else if (params.month) {
     const currentYear = new Date().getFullYear()
-    const month = searchParams.month
+    const month = params.month
     const startDate = `${currentYear}-${month}-01`
     const lastDay = new Date(currentYear, Number(month), 0).getDate()
     const endDate = `${currentYear}-${month}-${lastDay.toString().padStart(2, "0")}`
     query = query.gte("date", startDate).lte("date", endDate)
   }
 
-  if (searchParams.type) {
-    query = query.eq("type", searchParams.type)
+  if (params.type) {
+    query = query.eq("type", params.type)
   }
 
-  if (searchParams.category) {
-    query = query.eq("category_id", searchParams.category)
+  if (params.category) {
+    query = query.eq("category_id", params.category)
   }
 
-  const { data: transactions } = await query
+  const { data: transactions, count } = await query
 
-  // Get categories for filter
   const { data: categories } = await supabase.from("categories").select("*").eq("user_id", user.id).order("name")
+
+  const totalPages = count ? Math.ceil(count / pageSize) : 0
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -81,7 +94,9 @@ export default async function TransactionsPage({
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Transações</h1>
-            <p className="text-muted-foreground">Gerencie todas as suas receitas e despesas</p>
+            <p className="text-muted-foreground">
+              {count !== null ? `${count} transações encontradas` : "Gerencie todas as suas receitas e despesas"}
+            </p>
           </div>
           <Button asChild>
             <Link href="/transactions/new">
@@ -93,14 +108,19 @@ export default async function TransactionsPage({
 
         <TransactionFilters
           categories={categories || []}
-          currentType={searchParams.type}
-          currentCategory={searchParams.category}
-          currentYear={searchParams.year}
-          currentMonth={searchParams.month}
-          currentDay={searchParams.day}
+          currentType={params.type}
+          currentCategory={params.category}
+          currentYear={params.year}
+          currentMonth={params.month}
+          currentDay={params.day}
+          currentSearch={params.search}
         />
 
-        <TransactionList transactions={transactions || []} />
+        <TransactionList 
+          transactions={transactions || []} 
+          currentPage={page}
+          totalPages={totalPages}
+        />
       </main>
     </div>
   )

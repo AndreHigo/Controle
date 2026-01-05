@@ -35,13 +35,17 @@ function calculateInvoiceDate(purchaseDate: Date, closingDay: number, dueDay: nu
 }
 
 // Função para buscar ou criar a fatura
-async function getOrCreateInvoice(supabase: any, cardId: string, closingDate: Date, dueDate: Date) {
-  // Buscar fatura existente
+async function getOrCreateInvoice(supabase: any, cardId: string, userId: string, closingDate: Date, dueDate: Date) {
+  const referenceMonth = closingDate.getMonth() + 1
+  const referenceYear = closingDate.getFullYear()
+
   const { data: existingInvoice } = await supabase
     .from("credit_card_invoices")
     .select("*")
     .eq("credit_card_id", cardId)
-    .eq("closing_date", closingDate.toISOString().split("T")[0])
+    .eq("user_id", userId)
+    .eq("reference_month", referenceMonth)
+    .eq("reference_year", referenceYear)
     .eq("status", "open")
     .single()
 
@@ -49,14 +53,17 @@ async function getOrCreateInvoice(supabase: any, cardId: string, closingDate: Da
     return existingInvoice.id
   }
 
-  // Criar nova fatura
   const { data: newInvoice, error } = await supabase
     .from("credit_card_invoices")
     .insert({
+      user_id: userId,
       credit_card_id: cardId,
+      reference_month: referenceMonth,
+      reference_year: referenceYear,
       closing_date: closingDate.toISOString().split("T")[0],
       due_date: dueDate.toISOString().split("T")[0],
       status: "open",
+      total_amount: 0,
     })
     .select()
     .single()
@@ -78,7 +85,6 @@ export async function createPurchase(cardId: string, formData: FormData) {
     redirect("/auth/login")
   }
 
-  // Buscar informações do cartão
   const { data: card } = await supabase
     .from("credit_cards")
     .select("*")
@@ -96,14 +102,23 @@ export async function createPurchase(cardId: string, formData: FormData) {
   const categoryId = formData.get("category_id") as string | null
   const installments = Number.parseInt(formData.get("installments") as string)
   const notes = formData.get("notes") as string
+  const paymentMethod = (formData.get("payment_method") as string) || "credit"
 
-  // Calcular a data de fechamento da fatura
+  if (paymentMethod === "credit") {
+    const totalAmount = amount
+    const { data: validation } = await supabase.rpc("validate_credit_limit", {
+      p_card_id: cardId,
+      p_new_purchase_amount: totalAmount,
+    })
+
+    if (validation && !validation.valid) {
+      throw new Error(validation.error || "Limite de crédito insuficiente")
+    }
+  }
+
   const { closingDate, dueDate } = calculateInvoiceDate(purchaseDate, card.closing_day, card.due_day)
+  const invoiceId = await getOrCreateInvoice(supabase, cardId, user.id, closingDate, dueDate)
 
-  // Buscar ou criar a fatura
-  const invoiceId = await getOrCreateInvoice(supabase, cardId, closingDate, dueDate)
-
-  // Se for parcelado, criar múltiplas compras
   if (installments > 1) {
     const installmentAmount = amount / installments
     const purchases = []
@@ -118,9 +133,10 @@ export async function createPurchase(cardId: string, formData: FormData) {
         card.due_day,
       )
 
-      const instInvoiceId = await getOrCreateInvoice(supabase, cardId, instClosingDate, instDueDate)
+      const instInvoiceId = await getOrCreateInvoice(supabase, cardId, user.id, instClosingDate, instDueDate)
 
       purchases.push({
+        user_id: user.id,
         credit_card_id: cardId,
         invoice_id: instInvoiceId,
         description: `${description} (${i + 1}/${installments})`,
@@ -130,6 +146,7 @@ export async function createPurchase(cardId: string, formData: FormData) {
         installments,
         installment_number: i + 1,
         notes: notes || null,
+        payment_method: paymentMethod,
       })
     }
 
@@ -139,8 +156,8 @@ export async function createPurchase(cardId: string, formData: FormData) {
       throw new Error(error.message)
     }
   } else {
-    // Compra única
     const { error } = await supabase.from("credit_card_purchases").insert({
+      user_id: user.id,
       credit_card_id: cardId,
       invoice_id: invoiceId,
       description,
@@ -150,6 +167,7 @@ export async function createPurchase(cardId: string, formData: FormData) {
       installments: 1,
       installment_number: 1,
       notes: notes || null,
+      payment_method: paymentMethod,
     })
 
     if (error) {
@@ -187,6 +205,7 @@ export async function updatePurchase(id: string, cardId: string, formData: FormD
       notes: notes || null,
     })
     .eq("id", id)
+    .eq("user_id", user.id)
 
   if (error) {
     throw new Error(error.message)
@@ -206,7 +225,11 @@ export async function deletePurchase(id: string, cardId: string) {
     return
   }
 
-  await supabase.from("credit_card_purchases").delete().eq("id", id)
+  await supabase
+    .from("credit_card_purchases")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", user.id)
 
   revalidatePath(`/credit-cards/${cardId}/purchases`)
 }

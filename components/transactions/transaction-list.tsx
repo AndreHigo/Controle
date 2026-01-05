@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button"
 import type { Transaction } from "@/lib/types"
 import { format } from "date-fns"
 import { ptBR } from "date-fns/locale"
-import { ArrowDownIcon, ArrowUpIcon, Edit, Trash2 } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, Edit, Trash2, ChevronLeft, ChevronRight } from "lucide-react"
 import Link from "next/link"
 import { useState, useTransition } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,11 +24,15 @@ import { deleteTransaction } from "@/app/transactions/actions"
 
 interface TransactionListProps {
   transactions: Transaction[]
+  currentPage?: number
+  totalPages?: number
 }
 
-export function TransactionList({ transactions }: TransactionListProps) {
+export function TransactionList({ transactions, currentPage = 1, totalPages = 1 }: TransactionListProps) {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
+  const router = useRouter()
+  const searchParams = useSearchParams()
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
@@ -43,6 +48,12 @@ export function TransactionList({ transactions }: TransactionListProps) {
       await deleteTransaction(deleteId)
       setDeleteId(null)
     })
+  }
+
+  const navigateToPage = (page: number) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("page", page.toString())
+    router.push(`/transactions?${params.toString()}`)
   }
 
   if (transactions.length === 0) {
@@ -132,6 +143,32 @@ export function TransactionList({ transactions }: TransactionListProps) {
           </Card>
         ))}
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 mt-6">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigateToPage(currentPage - 1)}
+            disabled={currentPage <= 1}
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Anterior
+          </Button>
+          <span className="text-sm text-muted-foreground">
+            Página {currentPage} de {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigateToPage(currentPage + 1)}
+            disabled={currentPage >= totalPages}
+          >
+            Próxima
+            <ChevronRight className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
+      )}
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
