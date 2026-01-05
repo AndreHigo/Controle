@@ -1,0 +1,20 @@
+{
+  "node": {
+    "40cb28242e309a3e074cca38c516dd1ecd876a9d44": {
+      "workers": {
+        "app/transactions/page": {
+          "moduleId": "[project]/.next-internal/server/app/transactions/page/actions.js { ACTIONS_MODULE0 => \"[project]/app/transactions/actions.ts [app-rsc] (ecmascript)\" } [app-rsc] (server actions loader, ecmascript)",
+          "async": false,
+          "exportedName": "deleteTransaction",
+          "filename": "app/transactions/actions.ts"
+        }
+      },
+      "layer": {
+        "app/transactions/page": "action-browser"
+      },
+      "exportedName": "deleteTransaction",
+      "filename": "app/transactions/actions.ts"
+    }
+  },
+  "edge": {}
+}

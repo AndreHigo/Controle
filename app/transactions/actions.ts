@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
+import { transactionSchema } from "@/lib/validations"
 
 export async function createTransaction(formData: FormData) {
   const supabase = await createClient()
@@ -15,65 +16,47 @@ export async function createTransaction(formData: FormData) {
     return { error: "Usuário não autenticado" }
   }
 
-  const amount = Number.parseFloat(formData.get("amount") as string)
-  const type = formData.get("type") as string
-  const creditCardId = (formData.get("credit_card_id") as string) || null
+  try {
+    const validated = transactionSchema.parse({
+      title: formData.get("title"),
+      amount: Number.parseFloat(formData.get("amount") as string),
+      type: formData.get("type"),
+      category_id: (formData.get("category_id") as string) || null,
+      credit_card_id: (formData.get("credit_card_id") as string) || null,
+      date: formData.get("date"),
+      description: (formData.get("description") as string) || null,
+    })
 
-  const data = {
-    user_id: user.id,
-    title: formData.get("title") as string,
-    amount,
-    type,
-    category_id: (formData.get("category_id") as string) || null,
-    credit_card_id: creditCardId,
-    date: formData.get("date") as string,
-    description: (formData.get("description") as string) || null,
-  }
+    const { data, error } = await supabase.rpc("create_transaction_with_balance", {
+      p_user_id: user.id,
+      p_title: validated.title,
+      p_amount: validated.amount,
+      p_type: validated.type,
+      p_category_id: validated.category_id,
+      p_credit_card_id: validated.credit_card_id,
+      p_date: validated.date,
+      p_description: validated.description,
+    })
 
-  if (creditCardId) {
-    // Buscar o cartão atual para pegar o saldo
-    const { data: creditCard, error: fetchError } = await supabase
-      .from("credit_cards")
-      .select("balance")
-      .eq("id", creditCardId)
-      .eq("user_id", user.id)
-      .single()
-
-    if (fetchError) {
-      return { error: "Erro ao buscar cartão de crédito" }
+    if (error) {
+      return { error: error.message }
     }
 
-    // Calcular novo saldo (receita adiciona, despesa subtrai)
-    const currentBalance = creditCard.balance || 0
-    const newBalance = type === "income" ? currentBalance + amount : currentBalance - amount
-
-    // Verificar se há saldo suficiente para despesas
-    if (type === "expense" && newBalance < 0) {
-      return { error: "Saldo insuficiente no cartão de crédito" }
+    if (data && !data.success) {
+      return { error: data.error }
     }
 
-    // Atualizar saldo do cartão
-    const { error: updateError } = await supabase
-      .from("credit_cards")
-      .update({ balance: newBalance })
-      .eq("id", creditCardId)
-      .eq("user_id", user.id)
-
-    if (updateError) {
-      return { error: "Erro ao atualizar saldo do cartão" }
+    revalidatePath("/transactions")
+    revalidatePath("/dashboard")
+    revalidatePath("/credit-cards")
+    redirect("/transactions")
+  } catch (err: any) {
+    console.error("Erro ao criar transação:", err)
+    if (err.errors) {
+      return { error: err.errors[0]?.message || "Dados inválidos" }
     }
+    return { error: err.message || "Erro ao criar transação" }
   }
-
-  const { error } = await supabase.from("transactions").insert(data)
-
-  if (error) {
-    return { error: error.message }
-  }
-
-  revalidatePath("/transactions")
-  revalidatePath("/dashboard")
-  revalidatePath("/credit-cards")
-  redirect("/transactions")
 }
 
 export async function updateTransaction(id: string, formData: FormData) {
@@ -87,88 +70,47 @@ export async function updateTransaction(id: string, formData: FormData) {
     return { error: "Usuário não autenticado" }
   }
 
-  const { data: oldTransaction, error: fetchError } = await supabase
-    .from("transactions")
-    .select("*")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single()
+  try {
+    const validated = transactionSchema.parse({
+      title: formData.get("title"),
+      amount: Number.parseFloat(formData.get("amount") as string),
+      type: formData.get("type"),
+      category_id: (formData.get("category_id") as string) || null,
+      credit_card_id: (formData.get("credit_card_id") as string) || null,
+      date: formData.get("date"),
+      description: (formData.get("description") as string) || null,
+    })
 
-  if (fetchError) {
-    return { error: "Transação não encontrada" }
-  }
+    const { data, error } = await supabase.rpc("update_transaction_with_balance", {
+      p_transaction_id: id,
+      p_user_id: user.id,
+      p_title: validated.title,
+      p_amount: validated.amount,
+      p_type: validated.type,
+      p_category_id: validated.category_id,
+      p_credit_card_id: validated.credit_card_id,
+      p_date: validated.date,
+      p_description: validated.description,
+    })
 
-  const amount = Number.parseFloat(formData.get("amount") as string)
-  const type = formData.get("type") as string
-  const creditCardId = (formData.get("credit_card_id") as string) || null
-
-  if (oldTransaction.credit_card_id) {
-    const { data: oldCard } = await supabase
-      .from("credit_cards")
-      .select("balance")
-      .eq("id", oldTransaction.credit_card_id)
-      .single()
-
-    if (oldCard) {
-      const revertedBalance =
-        oldTransaction.type === "income"
-          ? (oldCard.balance || 0) - oldTransaction.amount
-          : (oldCard.balance || 0) + oldTransaction.amount
-
-      await supabase.from("credit_cards").update({ balance: revertedBalance }).eq("id", oldTransaction.credit_card_id)
-    }
-  }
-
-  if (creditCardId) {
-    const { data: creditCard, error: fetchCardError } = await supabase
-      .from("credit_cards")
-      .select("balance")
-      .eq("id", creditCardId)
-      .eq("user_id", user.id)
-      .single()
-
-    if (fetchCardError) {
-      return { error: "Erro ao buscar cartão de crédito" }
+    if (error) {
+      return { error: error.message }
     }
 
-    const currentBalance = creditCard.balance || 0
-    const newBalance = type === "income" ? currentBalance + amount : currentBalance - amount
-
-    if (type === "expense" && newBalance < 0) {
-      return { error: "Saldo insuficiente no cartão de crédito" }
+    if (data && !data.success) {
+      return { error: data.error }
     }
 
-    const { error: updateError } = await supabase
-      .from("credit_cards")
-      .update({ balance: newBalance })
-      .eq("id", creditCardId)
-      .eq("user_id", user.id)
-
-    if (updateError) {
-      return { error: "Erro ao atualizar saldo do cartão" }
+    revalidatePath("/transactions")
+    revalidatePath("/dashboard")
+    revalidatePath("/credit-cards")
+    redirect("/transactions")
+  } catch (err: any) {
+    if (err.errors) {
+      return { error: err.errors[0]?.message || "Dados inválidos" }
     }
+    return { error: "Erro ao atualizar transação" }
   }
-
-  const data = {
-    title: formData.get("title") as string,
-    amount,
-    type,
-    category_id: (formData.get("category_id") as string) || null,
-    credit_card_id: creditCardId,
-    date: formData.get("date") as string,
-    description: (formData.get("description") as string) || null,
-  }
-
-  const { error } = await supabase.from("transactions").update(data).eq("id", id).eq("user_id", user.id)
-
-  if (error) {
-    return { error: error.message }
-  }
-
-  revalidatePath("/transactions")
-  revalidatePath("/dashboard")
-  revalidatePath("/credit-cards")
-  redirect("/transactions")
 }
 
 export async function deleteTransaction(id: string) {
@@ -182,38 +124,17 @@ export async function deleteTransaction(id: string) {
     return { error: "Usuário não autenticado" }
   }
 
-  const { data: transaction, error: fetchError } = await supabase
-    .from("transactions")
-    .select("*")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single()
-
-  if (fetchError) {
-    return { error: "Transação não encontrada" }
-  }
-
-  if (transaction.credit_card_id) {
-    const { data: creditCard } = await supabase
-      .from("credit_cards")
-      .select("balance")
-      .eq("id", transaction.credit_card_id)
-      .single()
-
-    if (creditCard) {
-      const revertedBalance =
-        transaction.type === "income"
-          ? (creditCard.balance || 0) - transaction.amount
-          : (creditCard.balance || 0) + transaction.amount
-
-      await supabase.from("credit_cards").update({ balance: revertedBalance }).eq("id", transaction.credit_card_id)
-    }
-  }
-
-  const { error } = await supabase.from("transactions").delete().eq("id", id).eq("user_id", user.id)
+  const { data, error } = await supabase.rpc("delete_transaction_with_balance", {
+    p_transaction_id: id,
+    p_user_id: user.id,
+  })
 
   if (error) {
     return { error: error.message }
+  }
+
+  if (data && !data.success) {
+    return { error: data.error }
   }
 
   revalidatePath("/transactions")
@@ -221,3 +142,4 @@ export async function deleteTransaction(id: string) {
   revalidatePath("/credit-cards")
   return { success: true }
 }
+

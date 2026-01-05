@@ -38,18 +38,30 @@ export interface DashboardStats {
   transactionCount: number
 }
 
+export interface BankAccount {
+  id: string
+  user_id: string
+  name: string
+  current_balance: number // Novo campo para rastrear saldo
+  is_active: boolean
+  // ... outros campos de conta se necessário
+}
+
 export interface CreditCard {
   id: string
   user_id: string
   name: string
   last_digits: string | null
   credit_limit: number
+  available_balance: number
   closing_day: number
   due_day: number
   color: string | null
   is_active: boolean
   created_at: string
   updated_at: string
+  current_debt?: number
+  available_credit?: number
 }
 
 export interface CreditCardPurchase {
@@ -64,6 +76,7 @@ export interface CreditCardPurchase {
   current_installment: number
   description: string | null
   invoice_id: string | null
+  payment_method: "credit" | "debit"
   created_at: string
   updated_at: string
   category?: Category
@@ -82,8 +95,24 @@ export interface CreditCardInvoice {
   due_date: string
   payment_date: string | null
   transaction_id: string | null
+  paid_from_balance?: number
+  paid_from_external?: number
   created_at: string
   updated_at: string
   credit_card?: CreditCard
   purchases?: CreditCardPurchase[]
+}
+
+export interface CreditCardBalanceHistory {
+  id: string
+  credit_card_id: string
+  user_id: string
+  previous_balance: number
+  new_balance: number
+  amount_changed: number
+  operation: "transaction_income" | "transaction_expense" | "invoice_payment" | "manual_adjustment" | "initial_balance"
+  reference_type: "transaction" | "invoice" | "manual" | null
+  reference_id: string | null
+  description: string | null
+  created_at: string
 }
